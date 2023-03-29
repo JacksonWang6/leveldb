@@ -197,6 +197,7 @@ class Block::Iter : public Iterator {
       }
       Slice mid_key(key_ptr, non_shared);
       if (Compare(mid_key, target) < 0) {
+        // Key at "mid" is smaller get) < 0) {
         // Key at "mid" is smaller than "target".  Therefore all
         // blocks before "mid" are uninteresting.
         left = mid;

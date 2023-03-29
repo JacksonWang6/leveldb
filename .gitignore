@@ -6,3 +6,7 @@
 # Build directory.
 build/
 out/
+
+.cache
+cmake-build-debug
+.idea

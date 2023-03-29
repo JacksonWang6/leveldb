@@ -6,6 +6,12 @@
 
 namespace leveldb {
 
+void PutFixed16(std::string* dst, uint16_t value) {
+  char buf[sizeof(value)];
+  EncodeFixed16(buf, value);
+  dst->append(buf, sizeof(buf));
+}
+
 void PutFixed32(std::string* dst, uint32_t value) {
   char buf[sizeof(value)];
   EncodeFixed32(buf, value);

@@ -20,6 +20,7 @@
 namespace leveldb {
 
 // Standard Put... routines append to a string
+void PutFixed16(std::string* dst, uint16_t value);
 void PutFixed32(std::string* dst, uint32_t value);
 void PutFixed64(std::string* dst, uint64_t value);
 void PutVarint32(std::string* dst, uint32_t value);
@@ -51,6 +52,14 @@ char* EncodeVarint64(char* dst, uint64_t value);
 // Lower-level versions of Put... that write directly into a character buffer
 // REQUIRES: dst has enough space for the value being written
 
+inline void EncodeFixed16(char* dst, uint16_t value) {
+  uint8_t* const buffer = reinterpret_cast<uint8_t*>(dst);
+
+  // Recent clang and gcc optimize this to a single mov / str instruction.
+  buffer[0] = static_cast<uint8_t>(value);
+  buffer[1] = static_cast<uint8_t>(value >> 8);
+}
+
 inline void EncodeFixed32(char* dst, uint32_t value) {
   uint8_t* const buffer = reinterpret_cast<uint8_t*>(dst);
 
@@ -77,6 +86,14 @@ inline void EncodeFixed64(char* dst, uint64_t value) {
 
 // Lower-level versions of Get... that read directly from a character buffer
 // without any bounds checking.
+
+inline uint32_t DecodeFixed16(const char* ptr) {
+  const uint8_t* const buffer = reinterpret_cast<const uint8_t*>(ptr);
+
+  // Recent clang and gcc optimize this to a single mov / ldr instruction.
+  return (static_cast<uint32_t>(buffer[0])) |
+         (static_cast<uint32_t>(buffer[1]) << 8);
+}
 
 inline uint32_t DecodeFixed32(const char* ptr) {
   const uint8_t* const buffer = reinterpret_cast<const uint8_t*>(ptr);

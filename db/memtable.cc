@@ -3,10 +3,13 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
 #include "db/memtable.h"
+
 #include "db/dbformat.h"
+
 #include "leveldb/comparator.h"
 #include "leveldb/env.h"
 #include "leveldb/iterator.h"
+
 #include "util/coding.h"
 
 namespace leveldb {
@@ -83,11 +86,15 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   //  value bytes  : char[value.size()]
   size_t key_size = key.size();
   size_t val_size = value.size();
+  // 之所以要＋8是因为 还有7字节的seqnum和1字节的value type
   size_t internal_key_size = key_size + 8;
+  // 按照coding.cc里面的逻辑对整数进行编码，计算编码后的长度
   const size_t encoded_len = VarintLength(internal_key_size) +
                              internal_key_size + VarintLength(val_size) +
                              val_size;
+  // 内存池分配内存
   char* buf = arena_.Allocate(encoded_len);
+  // 编码并且写入内存
   char* p = EncodeVarint32(buf, internal_key_size);
   std::memcpy(p, key.data(), key_size);
   p += key_size;
@@ -96,6 +103,10 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   p = EncodeVarint32(p, val_size);
   std::memcpy(p, value.data(), val_size);
   assert(p + val_size == buf + encoded_len);
+  // 数据最终写入的形式如下
+  // len | key | seqnum | value type | value_len | value
+  // len等于键的长度额外加8字节，也就是internal_key的长度
+  // value_len就等于value的长度
   table_.Insert(buf);
 }
 
