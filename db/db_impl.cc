@@ -4,14 +4,6 @@
 
 #include "db/db_impl.h"
 
-#include <algorithm>
-#include <atomic>
-#include <cstdint>
-#include <cstdio>
-#include <set>
-#include <string>
-#include <vector>
-
 #include "db/builder.h"
 #include "db/db_iter.h"
 #include "db/dbformat.h"
@@ -22,11 +14,20 @@
 #include "db/table_cache.h"
 #include "db/version_set.h"
 #include "db/write_batch_internal.h"
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <set>
+#include <string>
+#include <vector>
+
 #include "leveldb/db.h"
 #include "leveldb/env.h"
 #include "leveldb/status.h"
 #include "leveldb/table.h"
 #include "leveldb/table_builder.h"
+
 #include "port/port.h"
 #include "table/block.h"
 #include "table/merger.h"
@@ -502,54 +503,50 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
   return status;
 }
 
+static uint64_t ParsePinode(Slice key) { return DecodeFixed64(key.data()); }
+
 /**
  * 调用BuildTable落盘Memtable
  *
  * 依赖PickLevelForMemTableOutput为新SST文件挑选level
  */
+/**
+ * NOTE: 改动了leveldb的函数，memtable的刷盘是直接按照pinode聚集写入L0Log当中
+ * 1. 首先收集连续的pinode的数据，放到内存当中
+ * 2. 一次性将这些数据写入到L0Log当中
+ * 3. 更新mapping table
+ *
+ * 此过程不涉及文件的增删，不会更改edit，但为了减少侵入性改动，保证接口不变
+ */
 Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
                                 Version* base) {
   mutex_.AssertHeld();
-  const uint64_t start_micros = env_->NowMicros();
-  FileMetaData meta;
-  meta.number = versions_->NewFileNumber();
-  pending_outputs_.insert(meta.number);
   Iterator* iter = mem->NewIterator();
-  Log(options_.info_log, "Level-0 table #%llu: started",
-      (unsigned long long)meta.number);
-
-  Status s;
-  {
-    mutex_.Unlock();
-    // 完成memtable到SSTable的转换
-    s = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta);
-    mutex_.Lock();
+  Log(options_.info_log, "WriteLevel0Table: started");
+  iter->SeekToFirst();
+  uint64_t cur_pinode;
+  std::string buffer;
+  if (iter->Valid()) {
+    cur_pinode = ParsePinode(iter->key());
   }
+  for (; iter->Valid(); iter->Next()) {
+    uint64_t pinode = ParsePinode(iter->key());
+    if (pinode != cur_pinode) {
+      // TODO：刷到L0Log当中（等待zqyL0Log的实现）
+      // 需要判断L0Log的空闲空间是否足够，不够的话需要等待GC完成，此处应该使用信号量进行控制
 
-  Log(options_.info_log, "Level-0 table #%llu: %lld bytes %s",
-      (unsigned long long)meta.number, (unsigned long long)meta.file_size,
-      s.ToString().c_str());
-  delete iter;
-  pending_outputs_.erase(meta.number);
-
-  // Note that if file_size is zero, the file has been deleted and
-  // should not be added to the manifest.
-  int level = 0;
-  if (s.ok() && meta.file_size > 0) {
-    const Slice min_user_key = meta.smallest.user_key();
-    const Slice max_user_key = meta.largest.user_key();
-    if (base != nullptr) {
-      level = base->PickLevelForMemTableOutput(min_user_key, max_user_key);
+      buffer.clear();
+      cur_pinode = pinode;
     }
-    edit->AddFile(level, meta.number, meta.file_size, meta.smallest,
-                  meta.largest);
+    // 将键值对添加到buffer当中
+    // 格式：key_size | val_size | key | value
+    PutVarint64(&buffer, iter->key().size());
+    PutVarint64(&buffer, iter->value().size());
+    PutLengthPrefixedSlice(&buffer, iter->key());
+    PutLengthPrefixedSlice(&buffer, iter->value());
   }
 
-  CompactionStats stats;
-  stats.micros = env_->NowMicros() - start_micros;
-  stats.bytes_written = meta.file_size;
-  stats_[level].Add(stats);
-  return s;
+  return Status::OK();
 }
 
 void DBImpl::CompactMemTable() {
